@@ -38,7 +38,8 @@ trait LiquibasePlugin extends Project with ClasspathProject {
     liquibasePassword,
     liquibaseDriver,
     liquibaseDefaultSchemaName,
-    null)
+    null,
+	null)
 
   def liquibase = new Liquibase(
     liquibaseChangeLogFile.absolutePath,
