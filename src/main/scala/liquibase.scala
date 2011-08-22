@@ -1,54 +1,205 @@
 package com.github.sdb.sbt.liquibase
 
-import _root_.sbt._
-import Configurations.Runtime
+import sbt._
+import sbt.complete._
+import sbt.Keys._
+import sbt.EvaluateTask._
+import sbt.Load.BuildStructure
+import sbt.CommandSupport._
+import sbt.complete.Parsers._
 
-import _root_.liquibase.integration.commandline.CommandLineUtils
-import _root_.liquibase.resource.FileSystemResourceAccessor
-import _root_.liquibase.Liquibase
-import _root_.liquibase.servicelocator.ServiceLocator
-import _root_.liquibase.exception._
+import sbt.classpath.ClasspathUtilities
+
+
+import liquibase.integration.commandline.CommandLineUtils
+import liquibase.resource.FileSystemResourceAccessor
+import liquibase.Liquibase
+import liquibase.exception._
+import liquibase.servicelocator.ServiceLocator
+
 
 import java.text.DateFormat
 
+case class LiquibaseConfiguration(val changeLogFile : File,
+	 							 val url : String,
+	 							 val driver : String,
+								 val username : Option[String],
+								 val password : Option[String],
+								 val contexts : Option[String],
+								 val defaultSchemaName : Option[String]	)  
+							
+								
+object LiquibasePlugin extends Plugin {
 
-trait LiquibasePlugin extends Project with ClasspathProject {
+  private val CLEAR_CHECKSUMS = "clear-checksums"
+  private val DROP = "drop"
+  private val ROLLBACK = "rollback"
+  private val ROLLBACK_COUNT = "rollback-count"
+  private val ROLLBACK_DATE = "rollback-date"
+  private val TAG = "tag"
+  private val UPDATE = "update"
+  private val UPDATE_COUNT = "update-count"
+  private val VALIDATE = "validate"
 
-  def liquibaseChangeLogFile: Path
-  def liquibaseUrl: String
-  def liquibaseDriver: String
+  import sbt.complete.DefaultParsers.{token,Space,NotSpace}
+  import sbt.complete.Parser._
+  override def settings = Seq(Keys.commands += liquibaseCommand)
 
-  def liquibaseUsername: String = null
-  def liquibasePassword: String = null
-  
-  def liquibaseContexts: String = null
-  def liquibaseDefaultSchemaName: String = null
+
+  val liquibaseDevOptions = SettingKey[Seq[LiquibaseConfiguration]]("liquibase-dev-options") 
+  val liquibaseTestOptions = SettingKey[Seq[LiquibaseConfiguration]]("liquibase-test-options")   
+
 
   def liquibaseDateFormat: DateFormat = DateFormat.getDateInstance()
-  
-
-  // pass the project logger to receive logging from Liquibase
-  SBTLogger.logger = Some(log)
 
 
-  def liquibaseDatabase = CommandLineUtils.createDatabaseObject(
-    ClasspathUtilities.toLoader(fullClasspath(Runtime)),
-    liquibaseUrl,
-    liquibaseUsername,
-    liquibasePassword,
-    liquibaseDriver,
-    liquibaseDefaultSchemaName,
-    null,
-	null)
+  SBTLogger.logger = Some(ConsoleLogger())
+  private val log = ConsoleLogger()
 
-  def liquibase = new Liquibase(
-    liquibaseChangeLogFile.absolutePath,
-    new FileSystemResourceAccessor,
-    liquibaseDatabase)
+  //TODO: read db config from map
+  private def dbParser = {
+	if (true)
+	 (literal("dev") | literal("test"))
+	else 
+	 literal("default")
+  }  
 
+   private val args = {
+	            token(Space) ~>
+	 			(token(Space ~> CLEAR_CHECKSUMS)  ~ token(Space ~> dbParser).? ~ (token(literal(" ").*)).?)   |
+				(token(Space ~> DROP)  ~ token(Space ~> dbParser).? ~ ((token(Space ~> NotSpace)).*).? ) |
+				(token(Space ~> ROLLBACK)  ~ token(Space ~> dbParser).? ~ ((token(Space ~> NotSpace)).*).? ) |
+				(token(Space ~> ROLLBACK_COUNT)  ~ token(Space ~> dbParser).? ~ ((token(Space ~> NotSpace)).*).? ) |	
+				(token(Space ~> ROLLBACK_DATE)  ~ token(Space ~> dbParser).? ~ ((token(Space ~> NotSpace)).*).? ) |
+				(token(Space ~> TAG)  ~ token(Space ~> dbParser).? ~ ((token(Space ~> NotSpace)).*).? ) |	
+				(token(Space ~> UPDATE)  ~ token(Space ~> dbParser).? ~ ((token(Space ~> NotSpace)).*).? ) |
+				(token(Space ~> UPDATE_COUNT)  ~ token(Space ~> dbParser).? ~ ((token(Space ~> NotSpace)).*).? ) |	
+				(token(Space ~> VALIDATE)  ~ token(Space ~> dbParser).? ~ ((token(Space ~> NotSpace)).*).? ) 	
+  }
 
-  private implicit def action2Result(a: LiquibaseAction) = a.run
+				
+   private lazy val liquibaseCommand = Command("liquibase")(_ => args)(doCommand)
 
+   def doCommand(state: State, params: ((String, Option[String]), Option[Seq[String]])) : State = {
+		val cmd = params._1._1
+		val db = params._1._2 
+		val args = params._2
+
+        val extracted = Project.extract(state)
+		val buildStruct = extracted.structure
+
+  		val liquibaseConfigurations  : Option[Seq[LiquibaseConfiguration]] = {
+			db match {
+				case Some("dev") =>  liquibaseDevOptions in extracted.currentRef get buildStruct.data
+				case Some("test") => liquibaseTestOptions in extracted.currentRef get buildStruct.data
+				case _ => log.error("No environment specified"); None
+			}
+	
+		}
+
+	   System.out.println(liquibaseConfigurations)
+	   liquibaseConfigurations match {
+			case Some(configs) =>
+			configs foreach { config =>
+			  cmd match {
+				case CLEAR_CHECKSUMS => liquibaseClearChecksums(config,state)
+				case DROP => liquibaseDropAll(config,state,args)
+				case ROLLBACK => liquibaseRollback(config,state,args)
+				case ROLLBACK_COUNT => liquibaseRollbackCount(config,state,args)
+				case ROLLBACK_DATE => liquibaseRollbackDate(config,state,args)
+				case TAG => liquibaseTag(config,state,args)
+				case UPDATE => liquibaseUpdate(config,state,None)
+				case UPDATE_COUNT => liquibaseUpdateCount(config,state,args)
+				case VALIDATE => liquibaseValidate(config,state)
+				case _ => log.error("Found an unknow command of " + cmd); None	
+			  }
+			}
+			case _ => log.error("No liquibase configuration found for " + db); None 
+		}
+		
+		state
+	}
+	
+	
+  private def liquibaseUpdate(liquibaseConfiguration : LiquibaseConfiguration,state : State, context : Option[String]) {
+    (new LiquibaseAction(liquibaseConfiguration,state,{lb => lb update
+	 	liquibaseConfiguration.contexts.getOrElse(null); None }) with Cleanup
+	).run
+  }
+
+  private def liquibaseDropAll(liquibaseConfiguration : LiquibaseConfiguration,state : State, args : Option[Seq[java.lang.String]]) = {
+    (new LiquibaseAction(liquibaseConfiguration,state,{ lb =>
+      args match {
+        case None => {
+				System.out.println("drop all")
+				 lb dropAll
+		}
+        case _ => lb dropAll (args.get:_*)
+      }; None}) with Cleanup).run 
+  }
+
+  private def liquibaseClearChecksums(liquibaseConfiguration : LiquibaseConfiguration,state : State) {
+	(new LiquibaseAction(liquibaseConfiguration,state,{ lb => lb clearCheckSums; None }) with Cleanup).run
+  }
+
+  private def liquibaseRollback(liquibaseConfiguration : LiquibaseConfiguration,state : State, args : Option[Seq[java.lang.String]]) {
+    (new LiquibaseAction(liquibaseConfiguration,state,{ lb =>
+      args match {
+	    case None => Some("The tag must be specified.")
+        case _ => lb rollback(args.get.head, liquibaseConfiguration.contexts.getOrElse(null)); None
+      }
+    }) with Cleanup).run 	
+  }
+
+  private def liquibaseRollbackCount(liquibaseConfiguration : LiquibaseConfiguration,state : State, args : Option[Seq[java.lang.String]]) {
+    (new LiquibaseAction(liquibaseConfiguration,state,{ lb =>
+      args match {
+	    case None => Some("Number of change sets must be specified.")
+        case _ => args.get.head match {
+          case Int(x) => lb rollback(x, liquibaseConfiguration.contexts.getOrElse(null)); None
+          case _ => Some("Number of change sets must be an integer value.")
+        }
+      }
+    }) with Cleanup).run 	
+  }
+
+  private def liquibaseRollbackDate(liquibaseConfiguration : LiquibaseConfiguration, state : State, args : Option[Seq[java.lang.String]]) {
+    (new LiquibaseAction(liquibaseConfiguration,state,{ lb =>
+      args match {
+	    case None => Some("Date must be specified.")
+        case _ => args.get.head match {
+          case Date(x) => lb rollback(x,  liquibaseConfiguration.contexts.getOrElse(null)); None
+          case _ => Some("The format of the date must match that of 'liquibaseDateFormat'.")
+        }
+      }
+    }) with Cleanup).run	
+  }
+
+  private def liquibaseTag(liquibaseConfiguration : LiquibaseConfiguration, state : State, args : Option[Seq[java.lang.String]]) {
+	(new LiquibaseAction(liquibaseConfiguration,state, { lb =>
+      args match {
+	    case None => Some("The tag must be specified.")
+        case _ => lb tag args.get.head; None
+      }
+    }) with Cleanup).run
+  }
+
+  private def liquibaseUpdateCount(liquibaseConfiguration : LiquibaseConfiguration, state : State, args : Option[Seq[java.lang.String]]) {
+    (new LiquibaseAction(liquibaseConfiguration,state, { lb =>
+      args match {
+	    case None => Some("Number of change sets must be specified.")
+        case _ => args.get.head match {
+          case Int(x) => lb update(x, liquibaseConfiguration.contexts.getOrElse(null)); None
+          case _ => Some("Number of change sets must be an integer value.")
+        }
+      }
+    }) with Cleanup).run
+  }	
+
+  private def liquibaseValidate(liquibaseConfiguration : LiquibaseConfiguration, state : State) {
+    (new LiquibaseAction(liquibaseConfiguration,state, { lb => lb validate; None }) with Cleanup).run	
+  }
+	
   object Int {
     def unapply(s: String): Option[Int] = try {
       Some(s.toInt)
@@ -67,113 +218,48 @@ trait LiquibasePlugin extends Project with ClasspathProject {
     }
   }
 
-  lazy val liquibaseUpdate = liquibaseUpdateAction
-  def liquibaseUpdateAction = task {
-    new LiquibaseAction({lb => lb update liquibaseContexts; None }) with Cleanup
-  } describedAs  "Applies un-run changes to the database."
+  private implicit def action2Result(a: LiquibaseAction) = a.run
 
+  abstract class LiquibaseAction(liquibaseConfiguration : LiquibaseConfiguration, state : State, action: Liquibase => Option[String]) {
+	 val runtimeCP = Project.evaluateTask(fullClasspath in Runtime,state)
+	
+	 val liquibaseClassPath : Option[ClassLoader] = {
+	   runtimeCP match {
+		case  Some(sbt.Value(classpath)) => Some(ClasspathUtilities.toLoader(classpath.files))
+		case _ => None
+	   } 
+	 } 
+	
+	 val liquibaseDatabase = CommandLineUtils.createDatabaseObject(
+			liquibaseClassPath.getOrElse(ClasspathUtilities.rootLoader),
+			liquibaseConfiguration.url,
+			liquibaseConfiguration.username.getOrElse(null),
+			liquibaseConfiguration.password.getOrElse(null),
+			liquibaseConfiguration.driver,
+			liquibaseConfiguration.defaultSchemaName.getOrElse(null),
+			null)
 
-  lazy val liquibaseUpdateCount = liquibaseUpdateCountAction
-  def liquibaseUpdateCountAction = taskWithArgs { args => {
-    new LiquibaseAction({ lb =>
-      args.size match {
-        case 1 => args(0) match {
-          case Int(x) => lb update(x, liquibaseContexts); None
-          case _ => Some("Number of change sets must be an integer value.")
-        }
-        case _ => Some("Number of change sets must be specified.")
-      }
-    }) with Cleanup }
-  } describedAs  "Applies the next number of change sets."
+			
+	val liquibase = new Liquibase(
+			liquibaseConfiguration.changeLogFile.absolutePath,
+			new FileSystemResourceAccessor,
+			liquibaseDatabase)
 
-
-  lazy val liquibaseDrop = liquibaseDropAction
-  def liquibaseDropAction = taskWithArgs { args => {
-    new LiquibaseAction({ lb =>
-      args.size match {
-        case 0 => lb dropAll
-        case _ => lb dropAll (args:_*)
-      }; None
-    }) with Cleanup }
-  } describedAs  "Drops database objects owned by the current user."
-
-
-  lazy val liquibaseTag = liquibaseTagAction
-  def liquibaseTagAction = taskWithArgs { args => {
-    new LiquibaseAction({ lb =>
-      args.size match {
-        case 1 => lb tag args(0); None
-        case _ => Some("The tag must be specified.")
-      }
-    }) with Cleanup }
-  } describedAs  "Tags the current database state for future rollback."
-
-
-  lazy val liquibaseRollback = liquibaseRollbackAction
-  def liquibaseRollbackAction = taskWithArgs { args => {
-    new LiquibaseAction({ lb =>
-      args.size match {
-        case 1 => lb rollback(args(0), liquibaseContexts); None
-        case _ => Some("The tag must be specified.")
-      }
-    }) with Cleanup }
-  } describedAs  "Rolls back the database to the state it was in when the tag was applied."
-
-
-  lazy val liquibaseRollbackCount = liquibaseRollbackCountAction
-  def liquibaseRollbackCountAction = taskWithArgs { args => {
-    new LiquibaseAction({ lb =>
-      args.size match {
-        case 1 => args(0) match {
-          case Int(x) => lb rollback(x, liquibaseContexts); None
-          case _ => Some("Number of change sets must be an integer value.")
-        }
-        case _ => Some("Number of change sets must be specified.")
-      }
-    }) with Cleanup }
-  } describedAs  "Rolls back the last number of change sets."
-
-
-  lazy val liquibaseRollbackDate = liquibaseRollbackDateAction
-  def liquibaseRollbackDateAction = taskWithArgs { args => {
-    new LiquibaseAction({ lb =>
-      args.size match {
-        case 1 => args(0) match {
-          case Date(x) => lb rollback(x, liquibaseContexts); None
-          case _ => Some("The format of the date must match that of 'liquibaseDateFormat'.")
-        }
-        case _ => Some("Date must be specified.")
-      }
-    }) with Cleanup }
-  } describedAs  "Rolls back the database to the state it was in at the given date/time."
-
-
-  lazy val liquibaseClearChecksums = liquibaseClearChecksumsAction
-  def liquibaseClearChecksumsAction = task {
-    new LiquibaseAction({ lb => lb clearCheckSums; None }) with Cleanup
-  } describedAs  "Removes current checksums from database."
-
-
-  lazy val liquibaseValidate = liquibaseValidateAction
-  def liquibaseValidateAction = task {
-    new LiquibaseAction({ lb => lb validate; None }) with Cleanup
-  } describedAs  "Checks the changelog for errors."
-
-    
-  def taskWithArgs(t: (Array[String]) => Option[String]) =
-    task { args => task { t(args) } }
-
-
-  abstract class LiquibaseAction(action: Liquibase => Option[String]) {
-    lazy val liquibase = LiquibasePlugin.this.liquibase
-    def run: Option[String] = exec({ action(liquibase) })
+			
+    def run: Option[String] = {
+		System.out.println(action)
+		exec({ action(liquibase) })
+	}
+	
     def exec(f: => Option[String]) = f
+
   }
 
   trait Cleanup extends LiquibaseAction {
 
     override def exec(f: => Option[String]): Option[String] = {
-      try { return f } finally { cleanup }
+      try { return f }
+ 	  finally { cleanup }
     }
 
     def cleanup {
@@ -187,12 +273,13 @@ trait LiquibasePlugin extends Project with ClasspathProject {
           case e: DatabaseException => log trace e
         }
     }
-  }
-
+  }	
+	
 }
 
 
-import _root_.liquibase.logging.core.AbstractLogger
+import liquibase.logging.core.AbstractLogger
+
 
 object SBTLogger {
 
@@ -236,4 +323,5 @@ class SBTLogger extends AbstractLogger {
   def severe(m: String, e: Throwable) { log("error", m, e) }
   def severe(m: String) { log("error", m, null) }
 }
+
 
