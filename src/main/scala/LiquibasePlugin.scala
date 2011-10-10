@@ -38,8 +38,13 @@ object LiquibasePlugin extends Plugin with LiquibaseRunner {
   import sbt.complete.Parser._
 
   val liquibaseOptions = SettingKey[Map[String,Seq[LiquibaseConfiguration]]]("liquibase-options")  
+  val liquibaseTestConfig = SettingKey[Option[String]]("liquibase-test-config")
+  
 
   val liquibase = InputKey[Unit]("liquibase")
+
+  
+
 
   SBTLogger.logger = Some(ConsoleLogger())
   val log : ConsoleLogger = ConsoleLogger()
@@ -104,10 +109,23 @@ object LiquibasePlugin extends Plugin with LiquibaseRunner {
 	}
    }
 
-
+   private def liquibaseTestListenerTask: Initialize[Task[TestReportListener]] =
+    (fullClasspath in Runtime,liquibaseOptions in Runtime, liquibaseTestConfig in Runtime) map {
+      (fullClasspath,liquibaseOptions, liquibaseTestConfig) => {
+			val cp = ClasspathUtilities.toLoader(Build.data(fullClasspath))
+			val liquibaseClasspath = if (cp != null) Some(cp) else None
+			var liquibaseConfigs : Option[Seq[LiquibaseConfiguration]] = None
+			if (liquibaseTestConfig.isDefined) {
+				liquibaseConfigs = getLiquibaseConfig(liquibaseTestConfig,liquibaseOptions)
+			}
+			new LiquibaseTestListener(liquibaseConfigs,liquibaseClasspath)
+	   }
+    }
 
     override def settings = Seq(
-      liquibase  <<= InputTask(parser)(taskDef)
+      liquibase  <<= InputTask(parser)(taskDef),
+	  liquibaseTestConfig := None,
+      testListeners <+= liquibaseTestListenerTask
     ) 
 	
 }
