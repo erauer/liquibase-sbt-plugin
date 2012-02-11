@@ -37,7 +37,7 @@ object LiquibasePlugin extends Plugin with LiquibaseRunner {
   import sbt.complete.DefaultParsers.{token,Space,NotSpace}
   import sbt.complete.Parser._
 
-  val liquibaseOptions = SettingKey[Map[String,Seq[LiquibaseConfiguration]]]("liquibase-options")  
+  val liquibaseOptions = SettingKey[LiquibaseSettings]("liquibase-options")  
   val liquibaseTestConfig = SettingKey[Option[String]]("liquibase-test-config")
   
 
@@ -49,16 +49,16 @@ object LiquibasePlugin extends Plugin with LiquibaseRunner {
   SBTLogger.logger = Some(ConsoleLogger())
   val log : ConsoleLogger = ConsoleLogger()
 
-  private def dbParser(configs : Map[String,Seq[LiquibaseConfiguration]]) = {
-	if (!configs.isEmpty) {
-	 val literals = configs.keySet.map(literal(_)).toSeq
+  private def dbParser(configs : LiquibaseSettings) = {
+	if (!configs.groupNames.isEmpty || !configs.dbNames.isEmpty) {
+	 val literals = configs.groupNames.map(literal(_)).toSeq ++ configs.dbNames.map(literal(_)).toSeq
 	 oneOf[String](literals)
 	} else 
 	 literal("default")
   }  
 
   val parser : Initialize[State => Parser[((String,Option[String]),Option[Seq[String]])]] =  
-			(liquibaseOptions) { (liquibaseOptions: Map[String,Seq[LiquibaseConfiguration]]) =>
+			(liquibaseOptions) { (liquibaseOptions: LiquibaseSettings) =>
 				(state: State) =>
 				val dbTokens = dbParser(liquibaseOptions)
 	            val tokens = (token(Space) ~>
@@ -76,21 +76,20 @@ object LiquibasePlugin extends Plugin with LiquibaseRunner {
    }
 
 
-   private def getLiquibaseConfig(key : Option[String], configs :Map[String,Seq[LiquibaseConfiguration]]) : Option[Seq[LiquibaseConfiguration]] = {
-		configs.get(key.getOrElse("default")).orElse(None)
+   private def getLiquibaseConfig(key : Option[String], configs : LiquibaseSettings) : Set[LiquibaseConfiguration] = {
+		configs.get(key.getOrElse("default"))
    }
 
    val taskDef  = (parsedTask: TaskKey[((String,Option[String]),Option[Seq[String]])])  => {
       // we are making a task, so use 'map'
 	  (fullClasspath in Runtime,liquibaseOptions in Runtime,parsedTask) map {
-          case (runtimeCP : Seq[Attributed[File]],liquibaseOptions: Map[String,Seq[LiquibaseConfiguration]],
+          case (runtimeCP : Seq[Attributed[File]],liquibaseOptions: LiquibaseSettings,
 			((cmd: String, db: Option[String]),args : Option[Seq[String]])) => {
   			val liquibaseConfiguration = getLiquibaseConfig(db,liquibaseOptions)
 			val cp = ClasspathUtilities.toLoader(Build.data(runtimeCP))
 			val liquibaseClasspath = if (cp != null) Some(cp) else None
 
-	   		liquibaseConfiguration foreach(
-	   			configs => configs.foreach (config => {
+	   		liquibaseConfiguration foreach( config =>
 				  cmd match {
 					case CLEAR_CHECKSUMS => liquibaseClearChecksums(config,liquibaseClasspath)
 					case DROP => liquibaseDropAll(config,liquibaseClasspath,args)
@@ -103,7 +102,6 @@ object LiquibasePlugin extends Plugin with LiquibaseRunner {
 					case VALIDATE => liquibaseValidate(config,liquibaseClasspath)
 					case _ => log.error("Found an unknow command of " + cmd); None	
 				  }
-	   			})
 	   		)		
   	        }
 	}
@@ -114,10 +112,8 @@ object LiquibasePlugin extends Plugin with LiquibaseRunner {
       (fullClasspath,liquibaseOptions, liquibaseTestConfig) => {
 			val cp = ClasspathUtilities.toLoader(Build.data(fullClasspath))
 			val liquibaseClasspath = if (cp != null) Some(cp) else None
-			var liquibaseConfigs : Option[Seq[LiquibaseConfiguration]] = None
-			if (liquibaseTestConfig.isDefined) {
-				liquibaseConfigs = getLiquibaseConfig(liquibaseTestConfig,liquibaseOptions)
-			}
+			var liquibaseConfigs : Set[LiquibaseConfiguration] = getLiquibaseConfig(liquibaseTestConfig,liquibaseOptions)
+			
 			new LiquibaseTestListener(liquibaseConfigs,liquibaseClasspath)
 	   }
     }
