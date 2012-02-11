@@ -2,7 +2,7 @@ package com.github.sdb.sbt.liquibase
 
 import sbt._
 
-class LiquibaseTestListener(liquibaseConfig :  Option[Seq[LiquibaseConfiguration]], liquibaseClassPath :  Option[ClassLoader]) extends TestsListener with LiquibaseRunner {
+class LiquibaseTestListener(liquibaseConfig :  Set[LiquibaseConfiguration], liquibaseClassPath :  Option[ClassLoader]) extends TestsListener with LiquibaseRunner {
 	
     SBTLogger.logger = Some(ConsoleLogger())
     val log : ConsoleLogger = ConsoleLogger()
@@ -10,8 +10,8 @@ class LiquibaseTestListener(liquibaseConfig :  Option[Seq[LiquibaseConfiguration
 	def doComplete(status: TestResult.Value) = {}
 	
 	def doInit {
-		if (liquibaseConfig.isDefined) {
-			liquibaseConfig.get foreach (config => 
+		if (!liquibaseConfig.isEmpty) {
+			liquibaseConfig foreach (config => 
 			liquibaseUpdate(config,liquibaseClassPath,None))
 		}
 	}
