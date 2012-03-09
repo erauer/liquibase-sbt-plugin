@@ -168,7 +168,7 @@ abstract class LiquibaseAction(liquibaseConfiguration : LiquibaseConfiguration, 
 			liquibaseConfiguration.password.getOrElse(null),
 			liquibaseConfiguration.driver,
 			liquibaseConfiguration.defaultSchemaName.getOrElse(null),
-			null)
+			null,null)
 
 
 	val liquibase = new Liquibase(
