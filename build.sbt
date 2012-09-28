@@ -2,13 +2,13 @@ sbtPlugin := true
 
 name := "liquibase-sbt-plugin"
 
-version := "0.0.8"
+version := "0.0.9"
 
 organization := "com.github.sdb"
 
 
 libraryDependencies ++= Seq(
-	"org.liquibase" % "liquibase-core" % "2.0.3"
+	"org.liquibase" % "liquibase-core" % "2.0.5"
 )
 
 scalacOptions ++= Seq("-unchecked", "-deprecation")
