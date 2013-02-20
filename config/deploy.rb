@@ -8,7 +8,7 @@ set :keep_releases, 5
 
 task :staging do
   set :gateway, "msnap@63.236.65.21"
-  set :branch, (ENV['branch']||ENV['BRANCH']||"master")
+  set :branch, (ENV['branch']||ENV['BRANCH']||"develop")
   set :user, 'deploy'
   set :deploy_to, "/var/apps/liquibase"
   server "172.16.2.125", :app, :web, :primary => true
