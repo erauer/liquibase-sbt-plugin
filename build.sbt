@@ -1,8 +1,12 @@
+import S3._
+
 sbtPlugin := true
 
 name := "liquibase-sbt-plugin"
 
-version := "0.0.9"
+version := "0.1.0"
+
+scalaVersion := "2.9.2"
 
 organization := "com.github.sdb"
 
