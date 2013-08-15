@@ -1,6 +1,8 @@
-import S3._
+//import S3._
 
 sbtPlugin := true
+
+autoScalaLibrary := false
 
 name := "liquibase-sbt-plugin"
 

@@ -4,6 +4,8 @@ resolvers ++= Seq(
  "less is" at "http://repo.lessis.me"
 )
 
-addSbtPlugin("com.typesafe.sbt" % "sbt-s3" % "0.4")
+autoScalaLibrary := false
+
+//addSbtPlugin("com.typesafe.sbt" % "sbt-s3" % "0.4")
 
 resolvers += Classpaths.typesafeResolver
