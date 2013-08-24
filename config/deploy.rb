@@ -50,7 +50,7 @@ end
 namespace :sbt do
   task :package_locally, :roles => :app, :except => { :no_release => true } do
     run "mkdir -p #{release_path}/target"
-    run "cd #{release_path} && sbt +compile +publish-local"
+    run "cd #{release_path} && java -jar sbt-launch.jar +compile +publish-local"
   end
 end
 
